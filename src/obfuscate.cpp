@@ -508,17 +508,20 @@ static std::map<std::string, std::string> string_to_mapping(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Strip indentation/formatting                                        *
-/*  Removes leading whitespace, collapses blank lines, condenses        *
-/*  inline spaces.  Makes ouput maximally unreadable.                   */
+/* ------------------------------------------------------------------ */
+/*  Strip formatting — join lines to make code maximally compact.      *
+/*  Removes all newlines, joins statements after ;, keeps -- comments   *
+/*  on their own line.  Output is near-unreadable.                     */
 /* ------------------------------------------------------------------ */
 static std::string strip_formatting(const std::string& src) {
   std::string out;
-  int blank = 0;
+  bool need_space = false;
   bool at_line_start = true;
   for (size_t i = 0; i < src.size(); i++) {
     char c = src[i];
     if (c == '\'') {
+      if (need_space && !out.empty() && out.back() != ' ' && out.back() != '\n') out += ' ';
+      need_space = false; at_line_start = false;
       out += c; i++;
       while (i < src.size()) {
         out += src[i];
@@ -528,23 +531,33 @@ static std::string strip_formatting(const std::string& src) {
         }
         i++;
       }
-      at_line_start = false; continue;
+      continue;
     }
+    /* -- comments stay on their own line */
+    if (c == '-' && i+1 < src.size() && src[i+1] == '-') {
+      if (!out.empty() && out.back() != '\n') out += '\n';
+      out += c; out += src[i+1]; i += 2;
+      while (i < src.size() && src[i] != '\n' && src[i] != '\r') { out += src[i]; i++; }
+      out += '\n';
+      need_space = false; at_line_start = true;
+      continue;
+    }
+    /* Strip all newlines — join everything */
     if (c == '\n' || c == '\r') {
-      blank++; at_line_start = true;
-      if (blank <= 1) out += c;
+      need_space = true; at_line_start = true;
       continue;
     }
-    blank = 0;
-    if (at_line_start) {
-      if (c != ' ' && c != '\t') { out += c; at_line_start = false; }
-      continue;
-    }
+    /* Strip leading whitespace */
+    if (at_line_start && (c == ' ' || c == '\t')) continue;
+    at_line_start = false;
+    /* Collapse consecutive spaces to one */
     if (c == ' ' || c == '\t') {
-      if (!out.empty() && out.back() != ' ' && out.back() != '\n' && out.back() != '\r')
+      if (!out.empty() && out.back() != ' ' && out.back() != '\n')
         out += ' ';
       continue;
     }
+    if (need_space && !out.empty() && out.back() != ' ') out += ' ';
+    need_space = false;
     out += c;
   }
   return out;
