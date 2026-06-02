@@ -576,6 +576,22 @@ static std::string reindent_plsql(const std::string& src) {
     if (c == '-' && i+1 < src.size() && src[i+1] == '-') {
       line += c; line += src[i+1]; i += 2;
       while (i < src.size() && src[i] != '\n' && src[i] != '\r') { line += src[i]; i++; }
+      /* Flush the current line now (don't skip \n via continue) */
+      auto trim = line;
+      while (!trim.empty() && (trim[0]==' '||trim[0]=='\t')) trim.erase(0,1);
+      auto up = trim;
+      for (auto& ch : up) ch = toupper((unsigned char)ch);
+      if (up.find("END ") == 0 || up == "END" || up.find("END;") == 0 ||
+          up == "ELSIF" || up == "ELSE" || up.find("ELSIF ") == 0 ||
+          up == "EXCEPTION" || up.find("WHEN ") == 0)
+        indent = std::max(0, indent - 1);
+      out += std::string(indent * 2, ' ') + line + "\n";
+      line.clear();
+      if (up.find("BEGIN") == 0 || up == "DECLARE" ||
+          up.find("THEN") != std::string::npos ||
+          up.find("LOOP") != std::string::npos ||
+          up == "ELSE" || up.find("EXCEPTION") == 0)
+        indent++;
       continue;
     }
     if (c == '/' && i+1 < src.size() && src[i+1] == '*') {
@@ -781,7 +797,8 @@ std::string obfuscate_plsql(const std::string& source,
   /* Replace identifiers */
   auto obfuscated = replace_identifiers(clean, mapping);
 
-  /* Strip indentation/formatting for maximum unreadability */
+  /* Strip formatting so unwrapped obfuscated code is maximally unreadable.
+   * Formatting is restored during deobfuscation via reindent_plsql. */
   obfuscated = strip_formatting(obfuscated);
 
   /* Build reverse mapping (short -> original) for deobfuscation.
@@ -877,5 +894,5 @@ std::string deobfuscate_plsql(const std::string& source,
   while (!body.empty() && (body.back() == '\n' || body.back() == '\r'
          || body.back() == ' ' || body.back() == '\t')) body.pop_back();
   auto result = replace_identifiers(body, reverse_map);
-  return result;
+  return reindent_plsql(result);
 }
