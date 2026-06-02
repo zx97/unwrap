@@ -508,6 +508,109 @@ static std::map<std::string, std::string> string_to_mapping(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Strip indentation/formatting                                        *
+/*  Removes leading whitespace, collapses blank lines, condenses        *
+/*  inline spaces.  Makes ouput maximally unreadable.                   */
+/* ------------------------------------------------------------------ */
+static std::string strip_formatting(const std::string& src) {
+  std::string out;
+  int blank = 0;
+  bool at_line_start = true;
+  for (size_t i = 0; i < src.size(); i++) {
+    char c = src[i];
+    if (c == '\'') {
+      out += c; i++;
+      while (i < src.size()) {
+        out += src[i];
+        if (src[i] == '\'') {
+          if (i + 1 < src.size() && src[i+1] == '\'') { i++; out += src[i]; }
+          else break;
+        }
+        i++;
+      }
+      at_line_start = false; continue;
+    }
+    if (c == '\n' || c == '\r') {
+      blank++; at_line_start = true;
+      if (blank <= 1) out += c;
+      continue;
+    }
+    blank = 0;
+    if (at_line_start) {
+      if (c != ' ' && c != '\t') { out += c; at_line_start = false; }
+      continue;
+    }
+    if (c == ' ' || c == '\t') {
+      if (!out.empty() && out.back() != ' ' && out.back() != '\n' && out.back() != '\r')
+        out += ' ';
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Basic PL/SQL re-indenter                                            */
+/*  Re-indents code with standard 2-space indentation.                 */
+/* ------------------------------------------------------------------ */
+static std::string reindent_plsql(const std::string& src) {
+  std::string out;
+  int indent = 0;
+  std::string line;
+
+  for (size_t i = 0; i < src.size(); i++) {
+    char c = src[i];
+    if (c == '\'') {
+      line += c; i++;
+      while (i < src.size()) {
+        line += src[i];
+        if (src[i] == '\'') {
+          if (i + 1 < src.size() && src[i+1] == '\'') { i++; line += src[i]; }
+          else break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c == '-' && i+1 < src.size() && src[i+1] == '-') {
+      line += c; line += src[i+1]; i += 2;
+      while (i < src.size() && src[i] != '\n' && src[i] != '\r') { line += src[i]; i++; }
+      continue;
+    }
+    if (c == '/' && i+1 < src.size() && src[i+1] == '*') {
+      line += "/*"; i += 2;
+      while (i+1 < src.size() && !(src[i] == '*' && src[i+1] == '/')) { line += src[i]; i++; }
+      if (i+1 < src.size()) { line += "*/"; i += 2; }
+      continue;
+    }
+    if (c == '\n' || c == '\r') {
+      if (!line.empty()) {
+        auto trim = line;
+        while (!trim.empty() && (trim[0]==' '||trim[0]=='\t')) trim.erase(0,1);
+        auto up = trim;
+        for (auto& ch : up) ch = toupper((unsigned char)ch);
+        if (up.find("END ") == 0 || up == "END" || up.find("END;") == 0 ||
+            up == "ELSIF" || up == "ELSE" || up.find("ELSIF ") == 0 ||
+            up == "EXCEPTION" || up.find("WHEN ") == 0)
+          indent = std::max(0, indent - 1);
+        out += std::string(indent * 2, ' ') + line + "\n";
+        line.clear();
+        if (up.find("BEGIN") == 0 || up == "DECLARE" ||
+            up.find("THEN") != std::string::npos ||
+            up.find("LOOP") != std::string::npos ||
+            up == "ELSE" || up.find("EXCEPTION") == 0)
+          indent++;
+      }
+      continue;
+    }
+    line += c;
+  }
+  if (!line.empty()) out += std::string(indent * 2, ' ') + line + "\n";
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -677,6 +780,9 @@ std::string obfuscate_plsql(const std::string& source,
 
   /* Replace identifiers */
   auto obfuscated = replace_identifiers(clean, mapping);
+
+  /* Strip indentation/formatting for maximum unreadability */
+  obfuscated = strip_formatting(obfuscated);
 
   /* Build reverse mapping (short -> original) for deobfuscation.
    * Add both lowercase and uppercase short names so deobfuscation
