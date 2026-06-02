@@ -1,0 +1,9 @@
+build/
+*.sql
+test1
+unwrap
+wrap
+PL-SQL-Unwrapper
+*.bak
+*.swp
+.*.swp
