@@ -590,6 +590,7 @@ static std::string reindent_plsql(const std::string& src) {
       "COMMIT", "ROLLBACK", "OPEN", "FETCH", "CLOSE",
       "DELETE", "INSERT", "UPDATE", "SELECT",
       "EXECUTE", "PIPE", "CONTINUE", "EXIT", "GOTO", "PIPELINED",
+      "TYPE", "PROCEDURE", "FUNCTION", "PACKAGE",
     };
     for (auto kw : words) if (w == kw) return true;
     return false;
@@ -663,12 +664,15 @@ static std::string reindent_plsql(const std::string& src) {
         up.find("END CASE") == std::string::npos)
       blocks.push_back("CASE");
 
-    /* IS/AS after PROCEDURE/FUNCTION/PACKAGE opens a block */
-    bool has_is_as = (up.find("IS ") != std::string::npos ||
-         up == "IS" || (up.size() >= 3 && up.substr(up.size()-3) == " IS") ||
-         up.find("AS ") != std::string::npos ||
-         up == "AS" || (up.size() >= 3 && up.substr(up.size()-3) == " AS"));
-    if (has_is_as && up.find("END") != 0)
+    /* IS/AS only opens a block after PROCEDURE/FUNCTION/PACKAGE (not TYPE) */
+    bool has_is_as = (up.find("IS ") != std::string::npos || up == "IS" ||
+        (up.size() >= 3 && up.substr(up.size()-3) == " IS") ||
+         up.find("AS ") != std::string::npos || up == "AS" ||
+        (up.size() >= 3 && up.substr(up.size()-3) == " AS"));
+    if (has_is_as && up.find("END") != 0 &&
+        (up.find("PROCEDURE") != std::string::npos ||
+         up.find("FUNCTION") != std::string::npos ||
+         up.find("PACKAGE") != std::string::npos))
       blocks.push_back("BLOCK");
 
     prev_was_semi = false;
@@ -711,18 +715,8 @@ static std::string reindent_plsql(const std::string& src) {
     }
     if (c == ';') {
       line += ';';
-      /* Peek ahead: flush now unless followed by a statement keyword */
-      size_t pk = i + 1;
-      bool should_flush = true;
-      while (pk < src.size() && (src[pk] == ' ' || src[pk] == '\t')) pk++;
-      if (pk < src.size() && is_id_start(src[pk])) {
-        size_t ws = pk;
-        while (pk < src.size() && is_id_char(src[pk])) pk++;
-        auto word = src.substr(ws, pk - ws);
-        for (auto& ch : word) ch = toupper((unsigned char)ch);
-        if (is_stmt_start(word)) should_flush = false;
-      }
-      if (should_flush) flush_line();
+      /* Peek ahead: flush always after ; (next statement will split on space) */
+      flush_line();
       prev_was_semi = true;
       continue;
     }
@@ -747,12 +741,28 @@ static std::string reindent_plsql(const std::string& src) {
         if (is_stmt_start(word) &&
             (word == "BEGIN" || word == "DECLARE" || word == "ELSE" ||
              word == "ELSIF" || word == "END" || word == "EXCEPTION" ||
-             word == "WHEN" || word == "LOOP" || word == "CREATE" ||
-             word == "IF" || word == "FOR" || word == "WHILE" ||
-             word == "CASE" || word == "RETURN" || word == "RAISE" ||
-             word == "NULL" || word == "PIPE" || word == "CONTINUE" ||
-             word == "FUNCTION" || word == "PROCEDURE" || word == "TYPE")) {
-          flush_line();
+             word == "WHEN" || word == "LOOP" || word == "IF" ||
+             word == "FOR" || word == "WHILE" || word == "CASE" ||
+             word == "RETURN" || word == "RAISE" || word == "NULL" ||
+             word == "PIPE" || word == "CONTINUE" ||
+             word == "TYPE" || word == "PROCEDURE" ||
+             word == "FUNCTION" || word == "PACKAGE")) {
+          /* TYPE/PROCEDURE/FUNCTION always start a new line.
+             PACKAGE starts a new line unless it's a CREATE header.
+             RETURN on a FUNCTION/PROCEDURE line stays on same line. */
+          auto cu = line;
+          for (auto& ch : cu) ch = toupper((unsigned char)ch);
+          bool is_create_header = (cu.find("CREATE") == 0 &&
+              (word == "PACKAGE" || word == "OR" || word == "REPLACE"));
+          bool is_func_return = (word == "RETURN" &&
+              (cu.find("FUNCTION") != std::string::npos ||
+               cu.find("PROCEDURE") != std::string::npos));
+          if (!is_create_header && !is_func_return) {
+            flush_line();
+            i = ws - 1; continue;
+          }
+          /* CREATE header: add space and continue */
+          if (!line.empty() && line.back() != ' ') line += ' ';
           i = ws - 1; continue;
         }
       }
