@@ -16,26 +16,17 @@ Features
 --------
 - V1 unwrap — Oracle 8/8i/9i **(ported, untested)**
 - V2 unwrap — Oracle 10g+ through 23ai
-- V2 wrap   — encode plain PL/SQL into wrapped format (comments stripped
-  by default, `--keep-comments` to preserve them)
+- V2 wrap   — encode plain PL/SQL into wrapped format
 - **Obfuscate** — rename identifiers to very short names, embed
-  AES-256-CBC encrypted mapping for reversible deobfuscation
-- Auto-detection of wrapped sections
-- Mixed files (unwrapped + wrapped content)
-- Multiple wrapped sections in a single file
+  AES-256-CBC encrypted mapping with PBKDF2 key derivation
+- Auto-detection of wrapped sections (mixed files, multiple sections)
 - Embedded license & README in the binary
+- `-p <passphrase>` auto-deobfuscates after unwrap
 
 Limits
 ------
 - Maximum input file size: **128 MB**
 - V1 unwrapper is ported but lacks real-world validation
-- V1 unwrap — Oracle 8/8i/9i (full DIANA grammar)
-- V2 unwrap — Oracle 10g+ through 23ai
-- V2 wrap   — encode plain PL/SQL into wrapped format
-- Auto-detection of wrapped sections
-- Mixed files (unwrapped + wrapped content)
-- Multiple wrapped sections in a single file
-- Embedded license & README in the binary
 
 Usage
 -----
@@ -44,56 +35,46 @@ unwrap [options] [-i <file>] [-o <file>]
 wrap   [options]  -i <file> [-o <file>]
 ```
 
-| Option              | Description                                |
-|---------------------|--------------------------------------------|
-| `-i`, `--input`     | input file (stdin if piped)                |
-| `-o`, `--output`    | output file (stdout if omitted)            |
-| `--v1`              | force V1 unwrapper (8/8i/9i)               |
-| `--v2`              | force V2 unwrapper (10g+)                  |
-| `--wrap`            | wrap source (V2 method)                    |
-| `--keep-comments`   | preserve comments when wrapping            |
-| `--obfuscate`, `--obf` | rename identifiers to short names        |
-| `--deobfuscate`, `--deobf` | restore original names (needs passphrase) |
-| `-p`, `--passphrase` | encryption passphrase for obfuscation     |
-| `-l`, `--license`   | show license information                   |
-| `-h`, `--help`      | show this help                             |
-
-When invoked without arguments and stdin is a terminal, usage is
-displayed instead of reading from stdin.
-
-The `--license` and `--readme` flags work on any copy of the binary
-— the information is compiled in.
+| Option                     | Description                                   |
+|----------------------------|-----------------------------------------------|
+| `-i`, `--input`            | input file (stdin if piped)                   |
+| `-o`, `--output`           | output file (stdout if omitted)               |
+| `--v1`                     | force V1 unwrapper (8/8i/9i — UNTESTED)       |
+| `--v2`                     | force V2 unwrapper (10g+)                     |
+| `--wrap`                   | wrap source (V2 method)                       |
+| `--obfuscate`, `--obf`     | rename identifiers to short names + wrap      |
+| `--deobfuscate`, `--deobf` | restore original names (needs passphrase)     |
+| `-p`, `--passphrase`       | passphrase for obfuscation / auto-deobfuscate |
+| `--keep-comments`          | preserve comments (default: strip them)       |
+| `-V`, `--version`          | show version and author                       |
+| `-l`, `--license`          | show license information                      |
+| `--readme`                 | show embedded README                          |
+| `-h`, `--help`             | show this help                                |
 
 Oracle-compatible syntax (wrap mode)
 -------------------------------------
 ```
-wrap iname=file.sql oname=file.pls keep_comments=yes
+wrap iname=file.sql oname=file.pls keep_comments=yes help=yes
 ```
 
-When invoked as `wrap` (symlink to `unwrap`), defaults to wrap mode.
+When invoked without arguments and stdin is a terminal, usage is
+displayed instead of reading from stdin.  The `-p` flag alone triggers
+deobfuscation automatically after unwrap.
 
- Building
- --------
- **Dependencies:** cmake, zlib, OpenSSL development libraries (C++17 compiler required).
+Building
+--------
+**Dependencies:** cmake, zlib, OpenSSL (C++17).
 
- On Debian/Ubuntu:
- ```
- sudo apt install build-essential cmake libz-dev libssl-dev
- ```
- On Fedora/RHEL:
- ```
- sudo dnf install gcc-c++ cmake zlib-devel openssl-devel
- ```
- On Alpine:
- ```
- sudo apk add build-base cmake zlib-dev openssl-dev
- ```
+```
+make
+make test
+make clean
+```
 
- ```
- make
- make test
- make clean
- ```
+Install command by distribution:
+- **Debian/Ubuntu:** `apt install build-essential cmake libz-dev libssl-dev`
+- **Fedora/RHEL:** `dnf install gcc-c++ cmake zlib-devel openssl-devel`
+- **Alpine:** `apk add build-base cmake zlib-dev openssl-dev`
 
 Original project
 ----------------

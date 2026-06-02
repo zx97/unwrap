@@ -36,11 +36,13 @@ static void usage_unwrap(const char* prog) {
     << "  -o, --output <file>   output file (stdout if omitted)\n"
     << "  --v1                  force V1 unwrapper (8/8i/9i — UNTESTED)\n"
     << "  --v2                  force V2 unwrapper (10g+)\n"
+    << "  -p, --passphrase <key>  deobfuscation passphrase (auto-triggers)\n"
     << "  -l, --license         show license information\n"
     << "  --readme              show embedded README\n"
     << "  -V, --version         show version and author\n"
     << "  -h, --help            show this help\n"
-    << "\nNote: V1 unwrapper is ported but untested with real V1 wrapped files.\n"
+    << "\nAlso available: --wrap, --obfuscate, --deobfuscate, --keep-comments\n"
+    << "See '" << prog << " --obf --help' for obfuscation options.\n"
     << "Maximum input file size: 128 MB.\n";
 }
 
@@ -51,6 +53,8 @@ static void usage_wrap(const char* prog) {
     << "  -i, --input <file>        input file (required)\n"
     << "  -o, --output <file>       output file (default: <input>.pls)\n"
     << "  --keep-comments           preserve comments (default: strip them)\n"
+    << "  --obfuscate, --obf        also obfuscate (rename identifiers)\n"
+    << "  -p, --passphrase <key>    passphrase for obfuscation\n"
     << "  -l, --license             show license information\n"
     << "  --readme                  show embedded README\n"
     << "  -V, --version             show version and author\n"
@@ -63,15 +67,19 @@ static void usage_wrap(const char* prog) {
 static void usage_obf(const char* prog) {
   std::cerr
     << "Usage: " << prog << " --obfuscate|--deobfuscate -i <file> [-o <file>]\n"
-    << "Obfuscate or restore PL/SQL source code.\n"
-    << "  --obfuscate, --obf      rename identifiers to short names\n"
+    << "Obfuscate or restore PL/SQL source code  v" VERSION "  Copyright (C) 2026  Manuel FLURY\n"
+    << "  --obfuscate, --obf      rename identifiers to short names (and wrap)\n"
     << "  --deobfuscate, --deobf  restore original names (needs passphrase)\n"
     << "  -p, --passphrase <key>  encryption passphrase\n"
+    << "  --keep-comments         preserve comments (default: strip them)\n"
     << "  -i, --input <file>      input file\n"
     << "  -o, --output <file>     output file (stdout if omitted)\n"
     << "  -l, --license           show license information\n"
+    << "  --readme                show embedded README\n"
+    << "  -V, --version           show version and author\n"
     << "  -h, --help              show this help\n"
-    << "\nIf no passphrase is given, you will be prompted.\n";
+    << "\nIf no passphrase is given, you will be prompted.\n"
+    << "Maximum input file size: 128 MB.\n";
 }
 
 /* ------------------------------------------------------------------ */
