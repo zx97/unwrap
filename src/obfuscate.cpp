@@ -726,42 +726,44 @@ std::string obfuscate_plsql(const std::string& source,
 
   /* Protect ALL identifiers from the PACKAGE SPEC section (everything
    * before the first PACKAGE BODY).  These are public API: function names,
-   * procedure names, variable names, type names, etc.  Must not be renamed. */
+   * procedure names, variable names, type names, etc.  Must not be renamed.
+   * Only applies when BOTH a spec and body exist in the same file. */
   {
     auto body_pos = to_upper(clean).find("PACKAGE BODY");
-    size_t limit = (body_pos != std::string::npos) ? body_pos : clean.size();
-    for (size_t i = 0; i < limit; i++) {
-      if (clean[i] == '\'') {
-        i++;
-        while (i < limit) {
-          if (clean[i] == '\'') {
-            if (i + 1 < limit && clean[i+1] == '\'') i++;
-            else break;
-          }
+    if (body_pos != std::string::npos) {
+      for (size_t i = 0; i < body_pos; i++) {
+        if (clean[i] == '\'') {
           i++;
+          while (i < body_pos) {
+            if (clean[i] == '\'') {
+              if (i + 1 < body_pos && clean[i+1] == '\'') i++;
+              else break;
+            }
+            i++;
+          }
+          continue;
         }
-        continue;
-      }
-      if (clean[i] == '-' && i+1 < clean.size() && clean[i+1] == '-') {
-        i += 2;
-        while (i < limit && clean[i] != '\n' && clean[i] != '\r') i++;
-        continue;
-      }
-      if (clean[i] == '/' && i+1 < clean.size() && clean[i+1] == '*') {
-        i += 2;
-        while (i+1 < limit && !(clean[i] == '*' && clean[i+1] == '/')) i++;
-        if (i+1 < limit) i += 2; else i++;
-        continue;
-      }
-      if (is_id_start(clean[i])) {
-        size_t s = i;
-        while (i < limit && is_id_char(clean[i])) i++;
-        auto id = clean.substr(s, i - s);
-        auto up = to_upper(id);
-        if (!reserved_set.count(up)) {
-          reserved_set.insert(up);
+        if (clean[i] == '-' && i+1 < clean.size() && clean[i+1] == '-') {
+          i += 2;
+          while (i < body_pos && clean[i] != '\n' && clean[i] != '\r') i++;
+          continue;
         }
-        continue;
+        if (clean[i] == '/' && i+1 < clean.size() && clean[i+1] == '*') {
+          i += 2;
+          while (i+1 < body_pos && !(clean[i] == '*' && clean[i+1] == '/')) i++;
+          if (i+1 < body_pos) i += 2; else i++;
+          continue;
+        }
+        if (is_id_start(clean[i])) {
+          size_t s = i;
+          while (i < body_pos && is_id_char(clean[i])) i++;
+          auto id = clean.substr(s, i - s);
+          auto up = to_upper(id);
+          if (!reserved_set.count(up)) {
+            reserved_set.insert(up);
+          }
+          continue;
+        }
       }
     }
   }
@@ -837,10 +839,9 @@ std::string obfuscate_plsql(const std::string& source,
 
   /* Generate short-name mapping */
   auto mapping = make_mapping(freq, all_ids);
-  if (mapping.empty()) return clean; /* nothing to rename */
 
-  /* Replace identifiers */
-  auto obfuscated = replace_identifiers(clean, mapping);
+  /* Replace identifiers (if any) */
+  auto obfuscated = mapping.empty() ? clean : replace_identifiers(clean, mapping);
 
   /* Strip formatting so unwrapped obfuscated code is maximally unreadable.
    * Formatting is restored during deobfuscation via reindent_plsql. */
