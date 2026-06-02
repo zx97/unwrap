@@ -673,6 +673,11 @@ std::string obfuscate_plsql(const std::string& source,
     while (pos < clean.size()) {
       auto cr = up.find("CREATE", pos);
       if (cr == std::string::npos) break;
+      /* Must be at start of a line or at start of source */
+      if (cr != 0 && clean[cr-1] != '\n' && clean[cr-1] != '\r') { pos = cr + 6; continue; }
+      /* Also check it's a standalone word, not part of an identifier */
+      if (cr + 6 < clean.size() && (isalnum((unsigned char)clean[cr+6]) || clean[cr+6] == '_'))
+        { pos = cr + 6; continue; }
       /* Find AS or IS on this CREATE line (or within the next few chars) */
       auto eol = clean.find('\n', cr);
       if (eol == std::string::npos) eol = clean.size();
@@ -694,31 +699,37 @@ std::string obfuscate_plsql(const std::string& source,
     }
   }
 
-  /* Protect all PROCEDURE, FUNCTION, TYPE names (both public in spec and
-   * private in body).  Only local variables and parameters get renamed. */
+  /* Protect PROCEDURE, FUNCTION, TYPE names from the PACKAGE SPEC section
+   * (everything before the first PACKAGE BODY).  These are public API.
+   * Names in the package body that match spec names are also protected.
+   * Nested subprograms (inside another proc/func) are private — not protected. */
   {
     auto up = to_upper(clean);
+    /* Find the spec/body boundary */
+    auto body_pos = up.find("PACKAGE BODY");
+    /* Collect names from the spec section */
+    std::set<std::string> spec_names;
     const char* keywords[] = {"PROCEDURE", "FUNCTION", "TYPE"};
     for (auto kw : keywords) {
       size_t pos = 0;
-      while ((pos = up.find(kw, pos)) != std::string::npos) {
-        size_t name_start = pos + strlen(kw);
-        while (name_start < clean.size()
-               && (clean[name_start] == ' ' || clean[name_start] == '\t'))
-          name_start++;
-        if (name_start < clean.size() && is_id_start(clean[name_start])) {
-          size_t name_end = name_start;
-          while (name_end < clean.size() && is_id_char(clean[name_end]))
-            name_end++;
-          auto name = clean.substr(name_start, name_end - name_start);
-          auto up_name = to_upper(name);
-          if (!reserved_set.count(up_name)) {
-            reserved_set.insert(up_name);
+      size_t limit = (body_pos != std::string::npos) ? body_pos : clean.size();
+      while ((pos = up.find(kw, pos)) != std::string::npos && pos < limit) {
+        size_t ns = pos + strlen(kw);
+        while (ns < clean.size() && (clean[ns] == ' ' || clean[ns] == '\t')) ns++;
+        if (ns < clean.size() && is_id_start(clean[ns])) {
+          size_t ne = ns;
+          while (ne < clean.size() && is_id_char(clean[ne])) ne++;
+          auto name = to_upper(clean.substr(ns, ne - ns));
+          if (!reserved_set.count(name)) {
+            reserved_set.insert(name);
+            spec_names.insert(name);
           }
         }
         pos++;
       }
     }
+    /* Also protect body top-level names that match spec names.
+     * These are already in reserved_set from the spec scan above. */
   }
 
   /* Protect all parameter names of PROCEDURE/FUNCTION declarations.
