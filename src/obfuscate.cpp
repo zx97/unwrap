@@ -575,107 +575,59 @@ static std::string strip_formatting(const std::string& src) {
   return out;
 }
 
+/* Check if up contains kw as a standalone identifier (not in string or comment) */
+static bool has_kw(const std::string& up, const std::string& kw) {
+  bool in_str = false, in_comment = false;
+  size_t p = 0;
+  while (p < up.size()) {
+    if (!in_comment && up[p] == '\'') { in_str = !in_str; p++; continue; }
+    if (!in_str && !in_comment && p+1 < up.size() && up[p] == '-' && up[p+1] == '-')
+      return false; /* rest of line is a comment */
+    if (!in_str && !in_comment && p+1 < up.size() && up[p] == '/' && up[p+1] == '*')
+      { in_comment = true; p += 2; continue; }
+    if (in_comment && p+1 < up.size() && up[p] == '*' && up[p+1] == '/')
+      { in_comment = false; p += 2; continue; }
+    if (!in_str && !in_comment && up.substr(p, kw.size()) == kw) {
+      bool before = (p == 0 || !(isalnum((unsigned char)up[p-1]) || up[p-1] == '_'));
+      size_t after = p + kw.size();
+      bool after_ok = (after >= up.size() || !(isalnum((unsigned char)up[after]) || up[after] == '_'));
+      if (before && after_ok) return true;
+    }
+    p++;
+  }
+  return false;
+}
+
 /* ------------------------------------------------------------------ */
-/*  PL/SQL re-indenter — splits compacted code, tracks block depth     *
-/*  using a stack of opened block types.  Properly handles END IF,      *
-/*  END LOOP, plain END, IS/AS, BEGIN, etc.                            */
+/*  PL/SQL re-indenter — minimal safe indentation.                     *
+/*  Only adjusts indent for BEGIN and END blocks to prevent             *
+/*  cumulative errors from complex keyword detection.                   */
 /* ------------------------------------------------------------------ */
 static std::string reindent_plsql(const std::string& src) {
-  auto is_stmt_start = [](const std::string& w) {
-    static const char* words[] = {
-      "BEGIN", "DECLARE", "EXCEPTION", "CREATE",
-      "IF", "THEN", "ELSIF", "ELSE", "END",
-      "LOOP", "FOR", "WHILE", "CASE",
-      "WHEN", "RETURN", "RAISE", "NULL",
-      "COMMIT", "ROLLBACK", "OPEN", "FETCH", "CLOSE",
-      "DELETE", "INSERT", "UPDATE", "SELECT",
-      "EXECUTE", "PIPE", "CONTINUE", "EXIT", "GOTO", "PIPELINED",
-      "TYPE", "PROCEDURE", "FUNCTION", "PACKAGE",
-    };
-    for (auto kw : words) if (w == kw) return true;
-    return false;
-  };
-
   std::string out;
-  std::vector<std::string> blocks; /* stack of opened block types */
   std::string line;
-    bool prev_was_semi = false;
+  int indent = 0;
 
   auto flush_line = [&]() {
     if (line.empty()) return;
     while (!line.empty() && (line.back() == ' ' || line.back() == '\t'))
       line.pop_back();
     if (line.empty()) return;
-    auto trim = line;
-    while (!trim.empty() && (trim[0]==' '||trim[0]=='\t')) trim.erase(0,1);
-    auto up = trim;
+    auto up = line;
     for (auto& ch : up) ch = toupper((unsigned char)ch);
 
-    /* Close blocks for END keywords */
-    if (up.find("END ") == 0 || up == "END" || up.find("END;") == 0) {
-      /* END IF / END LOOP / END CASE → close that specific block */
-      if (up.find("END IF") == 0) {
-        for (int i = (int)blocks.size()-1; i >= 0; i--)
-          if (blocks[i] == "IF") { blocks.resize(i); break; }
-      } else if (up.find("END LOOP") == 0) {
-        for (int i = (int)blocks.size()-1; i >= 0; i--)
-          if (blocks[i] == "LOOP") { blocks.resize(i); break; }
-      } else if (up.find("END CASE") == 0) {
-        for (int i = (int)blocks.size()-1; i >= 0; i--)
-          if (blocks[i] == "CASE") { blocks.resize(i); break; }
-      } else {
-        /* Plain END or END name — pop two blocks (BEGIN + parent) */
-        if (!blocks.empty()) blocks.pop_back();
-        if (!blocks.empty()) blocks.pop_back();
-      }
-    } else if (up.find("ELSIF") == 0 || up == "ELSE") {
-      /* ELSIF/ELSE at same level as IF — pop IF before output,
-       * re-push in opening section after output */
-      for (int i = (int)blocks.size()-1; i >= 0; i--)
-        if (blocks[i] == "IF") { blocks.resize(i); break; }
-    } else if (up.find("EXCEPTION") == 0) {
-      /* EXCEPTION is at same level as BEGIN */
-    } else if (up.find("WHEN ") == 0) {
-      /* WHEN is inside EXCEPTION, at same level as statements */
-    }
+    /* Decrease indent for lines starting with END */
+    auto trim = up;
+    while (!trim.empty() && trim[0] == ' ') trim.erase(0,1);
+    if (trim.find("END ") == 0 || trim == "END" || trim.find("END;") == 0)
+      indent = std::max(0, indent - 1);
 
-    /* Output the line */
-    out += std::string(blocks.size() * 2, ' ') + line + "\n";
+    out += std::string(std::min(indent, 10) * 2, ' ') + line + "\n";
     line.clear();
 
-    /* Open blocks for keywords on this line */
-    if (up.find("THEN") != std::string::npos) {
-      if (blocks.empty() || blocks.back() != "IF") blocks.push_back("IF");
-    }
-    /* ELSE/ELSIF re-open the IF block for statements inside it */
-    if (up == "ELSE" || up.find("ELSIF") == 0) {
-      blocks.push_back("IF");
-    }
-    if (up.find("LOOP") != std::string::npos &&
-        up.find("END LOOP") == std::string::npos &&
-        up.find("LOOP;") == std::string::npos) {
-      blocks.push_back("LOOP");
-    }
-    if (up == "DECLARE") blocks.push_back("DECLARE");
-    if (up == "ELSE") { /* ELSE doesn't open a new block */ }
-    if (up.find("EXCEPTION") == 0 && up.size() == 9) blocks.push_back("EXCEP");
-    if (up == "BEGIN" || up.find("BEGIN ") == 0) blocks.push_back("BEGIN");
-    if (up.find("CASE") == 0 && up != "CASE" &&
-        up.find("END CASE") == std::string::npos)
-      blocks.push_back("CASE");
-
-    /* IS/AS only opens a block after PROCEDURE/FUNCTION/PACKAGE (not TYPE) */
-    bool has_is_as = (up.find("IS ") != std::string::npos || up == "IS" ||
-        (up.size() >= 3 && up.substr(up.size()-3) == " IS") ||
-         up.find("AS ") != std::string::npos || up == "AS" ||
-        (up.size() >= 3 && up.substr(up.size()-3) == " AS"));
-    if (has_is_as && up.find("END") != 0 &&
-        (up.find("PROCEDURE") != std::string::npos ||
-         up.find("FUNCTION") != std::string::npos ||
-         up.find("PACKAGE") != std::string::npos))
-      blocks.push_back("BLOCK");
-
-    prev_was_semi = false;
+    /* Increase indent after lines containing BEGIN (but not END BEGIN) */
+    if (trim.find("BEGIN") == 0 && trim.find("END") == std::string::npos)
+      indent++;
   };
 
   for (size_t i = 0; i < src.size(); i++) {
@@ -695,8 +647,7 @@ static std::string reindent_plsql(const std::string& src) {
       flush_line();
       line += c; line += src[i+1]; i += 2;
       while (i < src.size() && src[i] != '\n' && src[i] != '\r') { line += src[i]; i++; }
-      flush_line();
-      continue;
+      flush_line(); continue;
     }
     if (c == '/' && i+1 < src.size() && src[i+1] == '*') {
       line += "/*"; i += 2;
@@ -707,65 +658,13 @@ static std::string reindent_plsql(const std::string& src) {
     if (c == '(') {
       line += c; int d = 1; i++;
       while (i < src.size() && d > 0) {
-        if (src[i] == '(') d++;
-        else if (src[i] == ')') d--;
+        if (src[i] == '(') d++; else if (src[i] == ')') d--;
         if (d > 0) { line += src[i]; i++; } else break;
       }
       line += ')'; continue;
     }
-    if (c == ';') {
-      line += ';';
-      /* Peek ahead: flush always after ; (next statement will split on space) */
-      flush_line();
-      prev_was_semi = true;
-      continue;
-    }
+    if (c == ';') { line += ';'; flush_line(); continue; }
     if (c == ' ' || c == '\t') {
-      size_t pk = i + 1;
-      while (pk < src.size() && (src[pk] == ' ' || src[pk] == '\t')) pk++;
-      if (pk < src.size() && is_id_start(src[pk])) {
-        size_t ws = pk;
-        while (pk < src.size() && is_id_char(src[pk])) pk++;
-        auto word = src.substr(ws, pk - ws);
-        for (auto& ch : word) ch = toupper((unsigned char)ch);
-        /* Don't split END IF / END LOOP / END CASE */
-        auto lc = line;
-        for (auto& ch : lc) ch = toupper((unsigned char)ch);
-        while (!lc.empty() && lc.back() == ' ') lc.pop_back();
-        if ((lc == "END" || lc.find("END ") != std::string::npos) &&
-            (word == "IF" || word == "LOOP" || word == "CASE")) {
-          if (!line.empty() && line.back() != ' ') line += ' ';
-          continue;
-        }
-        /* Split before statement-starting keywords (without ;) */
-        if (is_stmt_start(word) &&
-            (word == "BEGIN" || word == "DECLARE" || word == "ELSE" ||
-             word == "ELSIF" || word == "END" || word == "EXCEPTION" ||
-             word == "WHEN" || word == "LOOP" || word == "IF" ||
-             word == "FOR" || word == "WHILE" || word == "CASE" ||
-             word == "RETURN" || word == "RAISE" || word == "NULL" ||
-             word == "PIPE" || word == "CONTINUE" ||
-             word == "TYPE" || word == "PROCEDURE" ||
-             word == "FUNCTION" || word == "PACKAGE")) {
-          /* TYPE/PROCEDURE/FUNCTION always start a new line.
-             PACKAGE starts a new line unless it's a CREATE header.
-             RETURN on a FUNCTION/PROCEDURE line stays on same line. */
-          auto cu = line;
-          for (auto& ch : cu) ch = toupper((unsigned char)ch);
-          bool is_create_header = (cu.find("CREATE") == 0 &&
-              (word == "PACKAGE" || word == "OR" || word == "REPLACE"));
-          bool is_func_return = (word == "RETURN" &&
-              (cu.find("FUNCTION") != std::string::npos ||
-               cu.find("PROCEDURE") != std::string::npos));
-          if (!is_create_header && !is_func_return) {
-            flush_line();
-            i = ws - 1; continue;
-          }
-          /* CREATE header: add space and continue */
-          if (!line.empty() && line.back() != ' ') line += ' ';
-          i = ws - 1; continue;
-        }
-      }
       if (!line.empty() && line.back() != ' ') line += ' ';
       continue;
     }
