@@ -25,7 +25,7 @@ static const char* RESERVED[] = {
   "A", "ADD", "ACCESSIBLE", "AGENT", "AGGREGATE", "ALL", "ALTER", "AND",
   "ANY", "ARRAY", "AS", "ASC", "AT", "ATTRIBUTE", "AUTHID", "AVG",
   "BEGIN", "BETWEEN", "BFILE_BASE", "BINARY", "BLOB_BASE", "BLOCK",
-  "BODY", "BOTH", "BOUND", "BULK", "BY", "BYTE",
+  "BODY", "BOOLEAN", "BOTH", "BOUND", "BULK", "BY", "BYTE",
   "C", "CALL", "CALLING", "CASCADE", "CASE", "CHAR", "CHAR_BASE",
   "CHARACTER", "CHARSET", "CHARSETFORM", "CHARSETID", "CHECK",
   "CLOB_BASE", "CLONE", "CLOSE", "CLUSTER", "CLUSTERS", "COLAUTH",
@@ -136,6 +136,18 @@ static const char* RESERVED[] = {
   "XMLPATCH", "XMLPI", "XMLQUERY", "XMLROOT", "XMLSEQUENCE",
   "XMLSERIALIZE", "XMLTABLE", "XMLTRANSFORM",
   "ZONE",
+
+  /* PL/SQL datatypes and additional SQL types */
+  "BINARY_FLOAT", "BINARY_DOUBLE", "BINARY_INTEGER",
+  "DECIMAL", "DOUBLE",
+  "INTEGER", "INT",
+  "NATIONAL", "NCHAR", "NCLOB", "NUMERIC", "NVARCHAR2",
+  "PLS_INTEGER", "POSITIVE",
+  "REAL", "ROWID",
+  "SIMPLE_DOUBLE", "SIMPLE_FLOAT", "SIMPLE_INTEGER", "SMALLINT",
+  "SYS_REFCURSOR",
+  "UROWID",
+  "VARCHAR", "VARCHAR2",
 };
 
 static std::set<std::string> reserved_set;
@@ -712,37 +724,46 @@ std::string obfuscate_plsql(const std::string& source,
     }
   }
 
-  /* Protect PROCEDURE, FUNCTION, TYPE names from the PACKAGE SPEC section
-   * (everything before the first PACKAGE BODY).  These are public API.
-   * Names in the package body that match spec names are also protected.
-   * Nested subprograms (inside another proc/func) are private — not protected. */
+  /* Protect ALL identifiers from the PACKAGE SPEC section (everything
+   * before the first PACKAGE BODY).  These are public API: function names,
+   * procedure names, variable names, type names, etc.  Must not be renamed. */
   {
-    auto up = to_upper(clean);
-    /* Find the spec/body boundary */
-    auto body_pos = up.find("PACKAGE BODY");
-    /* Collect names from the spec section */
-    std::set<std::string> spec_names;
-    const char* keywords[] = {"PROCEDURE", "FUNCTION", "TYPE"};
-    for (auto kw : keywords) {
-      size_t pos = 0;
-      size_t limit = (body_pos != std::string::npos) ? body_pos : clean.size();
-      while ((pos = up.find(kw, pos)) != std::string::npos && pos < limit) {
-        size_t ns = pos + strlen(kw);
-        while (ns < clean.size() && (clean[ns] == ' ' || clean[ns] == '\t')) ns++;
-        if (ns < clean.size() && is_id_start(clean[ns])) {
-          size_t ne = ns;
-          while (ne < clean.size() && is_id_char(clean[ne])) ne++;
-          auto name = to_upper(clean.substr(ns, ne - ns));
-          if (!reserved_set.count(name)) {
-            reserved_set.insert(name);
-            spec_names.insert(name);
+    auto body_pos = to_upper(clean).find("PACKAGE BODY");
+    size_t limit = (body_pos != std::string::npos) ? body_pos : clean.size();
+    for (size_t i = 0; i < limit; i++) {
+      if (clean[i] == '\'') {
+        i++;
+        while (i < limit) {
+          if (clean[i] == '\'') {
+            if (i + 1 < limit && clean[i+1] == '\'') i++;
+            else break;
           }
+          i++;
         }
-        pos++;
+        continue;
+      }
+      if (clean[i] == '-' && i+1 < clean.size() && clean[i+1] == '-') {
+        i += 2;
+        while (i < limit && clean[i] != '\n' && clean[i] != '\r') i++;
+        continue;
+      }
+      if (clean[i] == '/' && i+1 < clean.size() && clean[i+1] == '*') {
+        i += 2;
+        while (i+1 < limit && !(clean[i] == '*' && clean[i+1] == '/')) i++;
+        if (i+1 < limit) i += 2; else i++;
+        continue;
+      }
+      if (is_id_start(clean[i])) {
+        size_t s = i;
+        while (i < limit && is_id_char(clean[i])) i++;
+        auto id = clean.substr(s, i - s);
+        auto up = to_upper(id);
+        if (!reserved_set.count(up)) {
+          reserved_set.insert(up);
+        }
+        continue;
       }
     }
-    /* Also protect body top-level names that match spec names.
-     * These are already in reserved_set from the spec scan above. */
   }
 
   /* Protect all parameter names of PROCEDURE/FUNCTION declarations.
