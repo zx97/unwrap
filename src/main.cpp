@@ -7,7 +7,7 @@
  * License                  : GNU General Public License v3.0
  */
 
-#define VERSION "3.0"
+#define VERSION "3.2.0"
 
 /* Maximum input file size: 128 MB */
 #define MAX_INPUT_SIZE (128UL * 1024 * 1024)
@@ -55,12 +55,15 @@ static void usage_wrap(const char* prog) {
     << "  --keep-comments           preserve comments (default: strip them)\n"
     << "  --obfuscate, --obf        also obfuscate (rename identifiers)\n"
     << "  -p, --passphrase <key>    passphrase for obfuscation\n"
+    << "  --compat, -c              strip schema prefix (schema.name -> name)\n"
     << "  -l, --license             show license information\n"
     << "  --readme                  show embedded README\n"
     << "  -V, --version             show version and author\n"
     << "  -h, --help                show this help\n"
     << "\nOracle-compatible syntax also accepted:\n"
     << "  iname=<file>  oname=<file>  keep_comments=yes  help=yes\n"
+    << "\n--compat removes \"schema.\" prefix from object names before\n"
+    << "wrapping (Oracle truncates at the dot otherwise).\n"
     << "Maximum input file size: 128 MB.\n";
 }
 
@@ -210,13 +213,71 @@ static std::string prompt_passphrase() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Compatibility mode: strip schema prefix from object names.         *
+ *                                                                     *
+ *  Oracle's wrap truncates at the dot in schema-qualified names       *
+ *  (e.g. "schema.func" becomes just "schema").  This function strips  *
+ *  the "schema." prefix so the object name is used directly.          */
+/* ------------------------------------------------------------------ */
+static std::string apply_compat(const std::string& input) {
+  auto up = to_upper(input);
+  std::string result = input;
+
+  /* Strip schema prefix from CREATE headers.
+   * Matches "CREATE OR REPLACE FUNCTION|PROCEDURE|PACKAGE schema.name"
+   * and removes "schema." leaving just "name". */
+  {
+    size_t pos = 0;
+    while (pos < result.size()) {
+      size_t cr;
+      if (pos == 0)
+        cr = up.find("CREATE", pos);
+      else {
+        cr = up.find("CREATE", pos);
+        while (cr != std::string::npos && cr > 0 && result[cr-1] != '\n')
+          cr = up.find("CREATE", cr + 1);
+      }
+      if (cr == std::string::npos) break;
+
+      size_t name_pos = std::string::npos;
+      auto after_cr = up.find("FUNCTION ", cr);
+      if (after_cr == std::string::npos || after_cr > cr + 30)
+        after_cr = up.find("PROCEDURE ", cr);
+      if (after_cr == std::string::npos || after_cr > cr + 30)
+        after_cr = up.find("PACKAGE BODY ", cr);
+      if (after_cr == std::string::npos || after_cr > cr + 30)
+        after_cr = up.find("PACKAGE ", cr);
+
+      if (after_cr != std::string::npos && after_cr <= cr + 30) {
+        auto kw_end = after_cr;
+        while (kw_end < up.size() && up[kw_end] != ' ') kw_end++;
+        name_pos = kw_end + 1;
+        auto dot = result.find('.', name_pos);
+        if (dot != std::string::npos) {
+          auto name_end = result.find_first_of(" (\n\r", name_pos);
+          if (dot < name_end) {
+            std::cerr << "Warning: removing schema prefix from '"
+                      << result.substr(name_pos, dot - name_pos) << "'\n";
+            result.erase(name_pos, dot - name_pos + 1);
+            up = to_upper(result);
+          }
+        }
+      }
+      pos = cr + 1;
+    }
+  }
+
+  return result;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main entry point                                                   */
 /* ------------------------------------------------------------------ */
 int main(int argc, char* argv[]) {
   std::string inpath, outpath, passphrase;
   bool force_v1 = false, force_v2 = false, do_wrap = false;
   bool do_obfuscate = false, do_deobfuscate = false;
-  bool keep_comments = false;
+  bool keep_comments = false, compat_mode = false;
 
   auto name = prog_name(argv[0]);
   bool is_wrap_symlink = (name == "wrap" || name == "wrap_v2");
@@ -257,6 +318,7 @@ int main(int argc, char* argv[]) {
       keep_comments = true; continue;
     }
     if (a == "--wrap") { do_wrap = true; continue; }
+    if (a == "--compat" || a == "-c") { compat_mode = true; continue; }
 
     /* Unwrap-mode flags */
     if (a == "--v1") { force_v1 = true; continue; }
@@ -413,7 +475,8 @@ int main(int argc, char* argv[]) {
       }
     }
   } else if (do_wrap) {
-    result = wrap_v2(input, keep_comments);
+    auto wrap_input = compat_mode ? apply_compat(input) : input;
+    result = wrap_v2(wrap_input, keep_comments);
   } else if (force_v1) {
     result = unwrap_v1(input);
   } else if (force_v2) {

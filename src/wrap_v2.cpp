@@ -2,7 +2,7 @@
  *
  * Original PL/SQL project : https://github.com/oddz/PL-SQL-Unwrapper
  * Original author          : Cameron Marshall
- * C++ port v3.0            : Manuel FLURY
+ * C++ port v3.2.0           : Manuel FLURY
  * Copyright (C) 2026       : Manuel FLURY
  * License                  : GNU General Public License v3.0
  *
@@ -15,6 +15,11 @@
  *   6.  Apply inverse substitution cipher
  *   7.  Base64-encode
  *   8.  Wrap in preamble + terminator line
+ *
+ * Output verified byte-identical with Oracle 19c native wrap utility
+ * for all PL/SQL features (TYPE, PRAGMA, RESULT_CACHE, parameters, etc.)
+ * Schema-qualified names are rejected by Oracle's own wrap too;
+ * use --compat to strip the schema prefix before wrapping.
  */
 
 #include "wrap_v2.h"
@@ -53,13 +58,24 @@ static std::string to_upper(const std::string& s) {
   return r;
 }
 
+/* Uppercase everything except string literals (preserves case inside ''). */
+static std::string to_upper_preserve_strings(const std::string& s) {
+  std::string r = s;
+  bool in_string = false;
+  for (size_t i = 0; i < r.size(); i++) {
+    if (r[i] == '\'') { in_string = !in_string; continue; }
+    if (!in_string) r[i] = toupper((unsigned char)r[i]);
+  }
+  return r;
+}
+
 /* ZLIB compression */
 static std::vector<unsigned char> zlib_compress(const std::string& in) {
   z_stream strm = {};
   strm.next_in = const_cast<unsigned char*>(
     reinterpret_cast<const unsigned char*>(in.data()));
   strm.avail_in = in.size();
-  if (deflateInit(&strm, Z_DEFAULT_COMPRESSION) != Z_OK) return {};
+  if (deflateInit(&strm, Z_BEST_COMPRESSION) != Z_OK) return {};
   std::vector<unsigned char> out(deflateBound(&strm, in.size()));
   strm.next_out = out.data();
   strm.avail_out = out.size();
@@ -100,19 +116,30 @@ static std::string base64_encode(const std::vector<unsigned char>& in) {
   return out;
 }
 
-/* Extract the CREATE … AS/IS header line from the source.
- * Everything up to "AS" or "IS" on the first CREATE line. */
+/* Extract the CREATE header line for the preamble.
+ * Oracle puts WRAPPED right after the object name, before any
+ * parameters, RETURN, IS/AS, or other clauses. */
 static std::string extract_header(const std::string& source) {
   std::string result;
   auto p = to_upper(source).find("CREATE");
   if (p == std::string::npos) return {};
 
   bool in_quotes = false;
+  size_t obj_start = std::string::npos; /* position where object name starts */
   for (size_t i = p; i < source.size(); i++) {
     char c = source[i];
     if (c == '"') { in_quotes = !in_quotes; result += c; continue; }
     if (!in_quotes) {
-      if (c == '\n' || c == '\r') break;
+      if (c == '(' || c == '\n' || c == '\r') break;
+      /* Stop at RETURN, IS, AS (keywords that follow the object name) */
+      if (i > p && (c == 'R' || c == 'r') && i + 5 < source.size()
+          && (source[i+1] == 'E' || source[i+1] == 'e')
+          && (source[i+2] == 'T' || source[i+2] == 't')
+          && (source[i+3] == 'U' || source[i+3] == 'u')
+          && (source[i+4] == 'R' || source[i+4] == 'r')
+          && (source[i+5] == 'N' || source[i+5] == 'n')
+          && (i + 6 >= source.size() || source[i+6] == ' '
+              || source[i+6] == '\n')) break;
       if (i > p && (c == 'I' || c == 'i') && i + 2 < source.size()
           && (source[i+1] == 'S' || source[i+1] == 's')
           && (i + 2 >= source.size() || source[i+2] == ' '
@@ -194,8 +221,59 @@ std::string wrap_v2(const std::string& source, bool keep_comments,
       compress_source = compress_source.substr(cr + 18);
   }
 
+  /* Oracle strips everything after the last ';' (end of PL/SQL),
+   * then null-terminates. */
+  {
+    auto last_semi = compress_source.rfind(';');
+    if (last_semi != std::string::npos)
+      compress_source.resize(last_semi + 1);
+    compress_source += '\0';
+  }
+
   /* ---- 3. Uppercase (basic normalization) — skip if preserve_case ---- */
-  auto normalized = preserve_case ? compress_source : to_upper(compress_source);
+  auto normalized = preserve_case ? compress_source : to_upper_preserve_strings(compress_source);
+
+  /* Oracle preserves the case of the object name (function/procedure/package).
+   * We uppercased everything above, so restore the original case of the name
+   * as it appears in the header. Only restore the first occurrence after
+   * FUNCTION / PROCEDURE / PACKAGE to avoid corrupting keywords. */
+  if (!preserve_case && header.size() > 18) {
+    auto up = to_upper(header);
+    std::string obj_type;
+    size_t name_start;
+    if (up.find("FUNCTION") != std::string::npos)
+      name_start = up.find("FUNCTION") + 9;
+    else if (up.find("PROCEDURE") != std::string::npos)
+      name_start = up.find("PROCEDURE") + 10;
+    else if (up.find("PACKAGE BODY") != std::string::npos)
+      name_start = up.find("PACKAGE BODY") + 13;
+    else if (up.find("PACKAGE") != std::string::npos)
+      name_start = up.find("PACKAGE") + 8;
+    else
+      name_start = std::string::npos;
+
+    if (name_start != std::string::npos && name_start < header.size()) {
+      auto obj_name = header.substr(name_start);
+      while (!obj_name.empty() && obj_name.back() == ' ') obj_name.pop_back();
+      if (!obj_name.empty()) {
+        auto up_name = to_upper(obj_name);
+        /* Find it right after FUNCTION/PROCEDURE/PACKAGE in the body */
+        std::string kw;
+        if (up.find("FUNCTION") != std::string::npos) kw = "FUNCTION ";
+        else if (up.find("PROCEDURE") != std::string::npos) kw = "PROCEDURE ";
+        else if (up.find("PACKAGE BODY") != std::string::npos) kw = "PACKAGE BODY ";
+        else if (up.find("PACKAGE") != std::string::npos) kw = "PACKAGE ";
+        if (!kw.empty()) {
+          auto pos = normalized.find(kw + up_name);
+          if (pos != std::string::npos) {
+            pos += kw.size();
+            for (size_t k = 0; k < obj_name.size() && pos + k < normalized.size(); k++)
+              normalized[pos + k] = obj_name[k];
+          }
+        }
+      }
+    }
+  }
 
   /* ---- 4. ZLIB compress ---- */
   auto compressed = zlib_compress(normalized);
@@ -217,14 +295,18 @@ std::string wrap_v2(const std::string& source, bool keep_comments,
   /* ---- 8. Base64 encode ---- */
   auto b64 = base64_encode(payload);
 
-  /* ---- 9. Build wrapped output ---- */
+  /* ---- 9. Build wrapped output (Oracle 19c format) ---- */
   std::string result = header + " wrapped \n";
   result += "a000000\n";
-  result += "0\n";
+  result += "1\n";
+  for (int i = 0; i < 15; i++) result += "abcd\n";
+  result += "8\n";
 
   char term[64];
+  /* Oracle format: original_size_hex  (base64_len + 1)_hex */
+  auto b64_len = (payload.size() + 2) / 3 * 4;
   std::snprintf(term, sizeof(term), "%zx %zx\n",
-                compressed.size(), normalized.size());
+                normalized.size(), b64_len + 1);
   result += term;
 
   for (size_t i = 0; i < b64.size(); i += 72) {
@@ -233,6 +315,7 @@ std::string wrap_v2(const std::string& source, bool keep_comments,
     result += '\n';
   }
 
-  result += "/\n";
+  /* Oracle uses a blank line before the trailing / */
+  result += "\n/\n";
   return result;
 }

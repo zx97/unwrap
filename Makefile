@@ -20,7 +20,7 @@ test: unwrap
 	@./unwrap -i $(T)/_ut_wrapped.sql >$(T)/_ut_roundtrip.sql 2>&1
 	@diff -q $(T)/_ut_src.sql $(T)/_ut_roundtrip.sql >/dev/null 2>&1 && echo "FAIL: roundtrip should differ (comments stripped)" && exit 1 || true
 	@grep -q 'wrapped' $(T)/_ut_wrapped.sql || { echo "FAIL: wrapped output missing marker"; exit 1; }
-	@grep -q 'CREATE OR REPLACE FUNCTION F' $(T)/_ut_roundtrip.sql || { echo "FAIL: roundtrip output broken"; exit 1; }
+	@grep -q 'CREATE OR REPLACE FUNCTION f' $(T)/_ut_roundtrip.sql || { echo "FAIL: roundtrip output broken"; exit 1; }
 	@# keep_comments: comments should survive roundtrip
 	./unwrap --wrap --keep-comments -i $(T)/_ut_src.sql -o $(T)/_ut_wrapped2.sql 2>&1
 	@./unwrap -i $(T)/_ut_wrapped2.sql >$(T)/_ut_roundtrip2.sql 2>&1

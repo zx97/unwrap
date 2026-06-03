@@ -2,7 +2,7 @@
  *
  * Original PL/SQL project : https://github.com/oddz/PL-SQL-Unwrapper
  * Original author          : Cameron Marshall
- * C++ port v3.0            : Manuel FLURY
+ * C++ port v3.2.0           : Manuel FLURY
  * Copyright (C) 2026       : Manuel FLURY
  * License                  : GNU General Public License v3.0
  *

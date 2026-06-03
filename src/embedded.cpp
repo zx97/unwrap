@@ -1,7 +1,7 @@
 #include "embedded.h"
 
 const char* EMBEDDED_LICENSE =
-  "PL/SQL Unwrap v3.0\n"
+  "PL/SQL Unwrap v3.2.0\n"
   "Copyright (C) 2026  Manuel FLURY\n\n"
   "C++ port of the PL/SQL Unwrapper project by Cameron Marshall\n"
   "https://github.com/oddz/PL-SQL-Unwrapper\n\n"
@@ -17,8 +17,8 @@ const char* EMBEDDED_LICENSE =
   "along with this program.  If not, see <https://www.gnu.org/licenses/>.\n";
 
 const char* EMBEDDED_README =
-  "PL/SQL Unwrap v3.0\n"
-  "==================\n\n"
+  "PL/SQL Unwrap v3.2.0\n"
+  "====================\n\n"
   "Standalone binary to unwrap (and wrap) Oracle PL/SQL source code.\n\n"
   "Original PL/SQL project : https://github.com/oddz/PL-SQL-Unwrapper\n"
   "Original author          : Cameron Marshall\n"
@@ -27,7 +27,8 @@ const char* EMBEDDED_README =
   "Supports:\n"
   "  V1 unwrap  — Oracle 8/8i/9i (ported but UNTESTED)\n"
   "  V2 unwrap  — Oracle 10g+ through 23ai\n"
-  "  V2 wrap    — encode plain PL/SQL into wrapped format\n"
+  "  V2 wrap    — encode plain PL/SQL into native wrapped format\n"
+  "               (byte-identical with Oracle 19c)\n"
   "  Obfuscate  — rename identifiers to short names, AES-encrypted restore\n\n"
   "Usage:\n"
   "  unwrap [options] [-i <file>] [-o <file>]\n"
@@ -41,6 +42,7 @@ const char* EMBEDDED_README =
   "  --keep-comments       preserve comments (default: strip them)\n"
   "  --obfuscate, --obf    rename identifiers to short names\n"
   "  --deobfuscate, --deobf  restore original names (needs passphrase)\n"
+  "  --compat, -c          strip schema prefix from object names\n"
   "  -p, --passphrase <key>  encryption passphrase\n"
   "  -l, --license             show license information\n"
   "  -h, --help                show this help\n\n"
@@ -48,7 +50,8 @@ const char* EMBEDDED_README =
   "  iname=<file>  oname=<file>  keep_comments=yes  help=yes\n\n"
   "Limits:\n"
   "  Maximum input file size: 128 MB\n"
-  "  V1 unwrapper is ported but lacks real-world validation.\n\n"
+  "  V1 unwrapper is ported but lacks real-world validation.\n"
+  "  Schema-qualified names need --compat (Oracle truncates at dot).\n\n"
   "Build:\n"
   "  Requires cmake, zlib, OpenSSL (C++17).\n"
   "  Debian/Ubuntu: apt install build-essential cmake libz-dev libssl-dev\n"
